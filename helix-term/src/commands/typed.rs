@@ -110,14 +110,14 @@ fn open(cx: &mut compositor::Context, args: &[Cow<str>], event: PromptEvent) -> 
     ensure!(!args.is_empty(), "wrong argument count");
     for arg in args {
         let (path, pos) = args::parse_file(arg);
-        let path = helix_stdx::path::expand_tilde(&path);
+        let path = helix_stdx::path::expand_tilde(path);
         // If the path is a directory, open a file picker on that directory and update the status
         // message
         if let Ok(true) = std::fs::canonicalize(&path).map(|p| p.is_dir()) {
             let callback = async move {
                 let call: job::Callback = job::Callback::EditorCompositor(Box::new(
                     move |editor: &mut Editor, compositor: &mut Compositor| {
-                        let picker = ui::file_picker(path, &editor.config());
+                        let picker = ui::file_picker(path.into_owned(), &editor.config());
                         compositor.push(Box::new(overlaid(picker)));
                     },
                 ));
@@ -1078,11 +1078,11 @@ fn change_current_directory(
         return Ok(());
     }
 
-    let dir = helix_stdx::path::expand_tilde(
-        args.first()
-            .context("target directory not provided")?
-            .as_ref(),
-    );
+    let dir = args
+        .first()
+        .context("target directory not provided")?
+        .as_ref();
+    let dir = helix_stdx::path::expand_tilde(Path::new(dir));
 
     helix_stdx::env::set_current_working_dir(dir)?;
 
@@ -1318,7 +1318,11 @@ fn reload_all(
         // Ensure that the view is synced with the document's history.
         view.sync_changes(doc);
 
-        doc.reload(view, &cx.editor.diff_providers)?;
+        if let Err(error) = doc.reload(view, &cx.editor.diff_providers) {
+            cx.editor.set_error(format!("{}", error));
+            continue;
+        }
+
         if let Some(path) = doc.path() {
             cx.editor
                 .language_servers
@@ -2257,7 +2261,7 @@ fn run_shell_command(
     let args = args.join(" ");
 
     let callback = async move {
-        let (output, success) = shell_impl_async(&shell, &args, None).await?;
+        let output = shell_impl_async(&shell, &args, None).await?;
         let call: job::Callback = Callback::EditorCompositor(Box::new(
             move |editor: &mut Editor, compositor: &mut Compositor| {
                 if !output.is_empty() {
@@ -2270,11 +2274,7 @@ fn run_shell_command(
                     ));
                     compositor.replace_or_push("shell", popup);
                 }
-                if success {
-                    editor.set_status("Command succeeded");
-                } else {
-                    editor.set_error("Command failed");
-                }
+                editor.set_status("Command succeeded");
             },
         ));
         Ok(call)
@@ -2411,6 +2411,46 @@ fn move_buffer(
     if let Err(err) = cx.editor.move_path(&old_path, new_path.as_ref()) {
         bail!("Could not move file: {err}");
     }
+    Ok(())
+}
+
+fn yank_diagnostic(
+    cx: &mut compositor::Context,
+    args: &[Cow<str>],
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let reg = match args.first() {
+        Some(s) => {
+            ensure!(s.chars().count() == 1, format!("Invalid register {s}"));
+            s.chars().next().unwrap()
+        }
+        None => '+',
+    };
+
+    let (view, doc) = current_ref!(cx.editor);
+    let primary = doc.selection(view.id).primary();
+
+    // Look only for diagnostics that intersect with the primary selection
+    let diag: Vec<_> = doc
+        .diagnostics()
+        .iter()
+        .filter(|d| primary.overlaps(&helix_core::Range::new(d.range.start, d.range.end)))
+        .map(|d| d.message.clone())
+        .collect();
+    let n = diag.len();
+    if n == 0 {
+        bail!("No diagnostics under primary selection");
+    }
+
+    cx.editor.registers.write(reg, diag)?;
+    cx.editor.set_status(format!(
+        "Yanked {n} diagnostic{} to register {reg}",
+        if n == 1 { "" } else { "s" }
+    ));
     Ok(())
 }
 
@@ -3005,7 +3045,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         aliases: &[],
         doc: "Clear given register. If no argument is provided, clear all registers.",
         fun: clear_register,
-        signature: CommandSignature::none(),
+        signature: CommandSignature::all(completers::register),
     },
     TypableCommand {
         name: "redraw",
@@ -3020,6 +3060,13 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         doc: "Move the current buffer and its corresponding file to a different path",
         fun: move_buffer,
         signature: CommandSignature::positional(&[completers::filename]),
+    },
+    TypableCommand {
+        name: "yank-diagnostic",
+        aliases: &[],
+        doc: "Yank diagnostic(s) under primary cursor to register, or clipboard by default",
+        fun: yank_diagnostic,
+        signature: CommandSignature::all(completers::register),
     },
 ];
 
