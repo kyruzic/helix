@@ -409,6 +409,8 @@ pub struct LspConfig {
     pub display_signature_help_docs: bool,
     /// Display inlay hints
     pub display_inlay_hints: bool,
+    /// The maximum length of inlay hints to display
+    pub inlay_hints_max_length: Option<usize>,
     /// Whether to enable snippet support
     pub snippets: bool,
     /// Whether to include declaration in the goto reference query
@@ -423,6 +425,7 @@ impl Default for LspConfig {
             auto_signature_help: true,
             display_signature_help_docs: true,
             display_inlay_hints: false,
+            inlay_hints_max_length: None,
             snippets: true,
             goto_reference_include_declaration: true,
         }
