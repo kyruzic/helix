@@ -1289,7 +1289,6 @@ fn compute_inlay_hints_for_view(
             if !editor.config().lsp.display_inlay_hints || editor.tree.try_get(view_id).is_none() {
                 return;
             }
-            let max_label_length = editor.config().lsp.inlay_hints_max_length;
 
             // Add annotations to relevant document, not the current one (it may have changed in between)
             let doc = match editor.documents.get_mut(&doc_id) {
@@ -1331,31 +1330,12 @@ fn compute_inlay_hints_for_view(
                     };
 
                 let label = match hint.label {
-                    lsp::InlayHintLabel::String(s) => match max_label_length {
-                        Some(max_length) => match s.len() > max_length {
-                            true => continue,
-                            false => s,
-                        },
-                        None => s,
-                    },
-                    lsp::InlayHintLabel::LabelParts(parts) => match max_label_length {
-                        Some(max_length) => {
-                            let s = parts
-                                .into_iter()
-                                .map(|p| p.value)
-                                .collect::<Vec<_>>()
-                                .join("");
-                            if s.len() > max_length {
-                                continue;
-                            }
-                            s
-                        }
-                        None => parts
-                            .into_iter()
-                            .map(|p| p.value)
-                            .collect::<Vec<_>>()
-                            .join(""),
-                    },
+                    lsp::InlayHintLabel::String(s) => s,
+                    lsp::InlayHintLabel::LabelParts(parts) => parts
+                        .into_iter()
+                        .map(|p| p.value)
+                        .collect::<Vec<_>>()
+                        .join(""),
                 };
 
                 let inlay_hints_vec = match hint.kind {
